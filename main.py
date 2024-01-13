@@ -6,7 +6,8 @@ from process import ProcessEDI
 
 interchange = Interchange.from_file('./cargo.txt')
 process = ProcessEDI()
-process.processSegments(interchange.segments)
+final_res = process.processSegments(interchange.segments)
+print(json.dumps(final_res,indent=2))
 
         
    

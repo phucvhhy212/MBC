@@ -4,7 +4,7 @@ import json
 class ProcessEDI:
     segments_group_1 = ["LOC","DTM"]
     segments_group_2 = ["RFF","DTM"]
-    segments_group_4 = ["LOC","DTM"]
+    segments_group_4 = {"segments_group_4":["LOC","DTM"]}
     segments_group_3 = ["TDT",segments_group_4]
     segments_group_7 = ["CTA","COM"]
     segments_group_6 = ["NAD","LOC",segments_group_7]
@@ -32,29 +32,38 @@ class ProcessEDI:
         pass
     
     
-    # DTM dang bi trung
-    def isSegmentGroup(self,segment):
-        if segment.tag == "DTM":
-            if self.current_tag != segment.tag:
-                self.start_segment_group = True
+    
+    def isInSegmentGroup(self,segment):
+        """Check if the message has reached the segment group or not (tag not in the first 10 segments of the message)
+        """
+        if self.start_segment_group:
+            return True
         else:        
             self.start_segment_group =  segment.tag not in ["","UNB","UNH","BGM","CTA","COM","DTM","TSR","FTX","FTX","GDS"]
         return self.start_segment_group
     
-    def checkSegmentInGroup(self,segment,segment_group_keys:list[dict]):
+    def findSegmentGroup(self,segment,segment_group_tags:list[dict]):
         """Find the index of the segment group which the segment in
-            :return: Ex {"index":1,"key":"segment_group1"}
+        
+            :param segment: The segment to find
+            :param segment_group_tags: list of tags in all segment groups
+            :returns: the segment group found or None
         """
-        for segment_group_keys_item in segment_group_keys:
-            if self.pass_sg_index !=0 and segment_group_keys.index(segment_group_keys_item) < self.pass_sg_index: continue
+        for segment_group_keys_item in segment_group_tags:
+            if self.pass_sg_index !=0 and segment_group_tags.index(segment_group_keys_item) < self.pass_sg_index: continue
             flat_array = [item for value in segment_group_keys_item.values() for sublist in (value if isinstance(value, list) else [value]) for item in (sublist if isinstance(sublist, list) else [sublist])]
             if segment.tag in flat_array:
-                return {"index":self.segment_group_dict_keys.index(segment_group_keys_item),"key":next(iter(segment_group_keys_item))}
+                # return {"index":self.segment_group_dict_keys.index(segment_group_keys_item),"key":next(iter(segment_group_keys_item))}
+                return segment_group_keys_item
         return None
     
     def convertSegmentMessageToDict(self,keys,child_keys,segment):
-        """Demonstrates triple double quotes
-        docstrings and does nothing really.
+        """Convert the segment's element to dictionary format.
+        
+            :param keys: main elements of the segment
+            :param child_keys: sub-elements of the segment (a main elements can contain sub-elements)
+            :param segment: the segment to process
+            :returns: The dictionary formatted of the segment
         """
         segment_array = segment.elements
         count_list_item = 0
@@ -68,11 +77,14 @@ class ProcessEDI:
         segment_dict = {"tag": f"{segment.tag}","elements":segment_dict}
         return segment_dict
     
-    def process_segment1(self,segment_array:list,key,segment_group_name):
+    def processSegmentGroup(self,segment_array:list,segment_group_tags:list):
         final_res = {}
         final_array = []
         final_array_item = {}
+        segment_group_name = next(iter(segment_group_tags))
+        key = segment_group_tags[segment_group_name][0]
         for segment in segment_array:
+            # if segment's tag is the sg key
             if segment["tag"] == key:
                 if final_array_item.get(key) is None:
                     final_array_item[key] = segment["elements"]
@@ -82,13 +94,14 @@ class ProcessEDI:
                     final_array_item = {}
                     final_array_item[key] = segment["elements"]
             else:
-                if final_array_item.get(segment["tag"]) is None:
-                    final_array_item[segment["tag"]] = segment["elements"]
-                else:
-                    if isinstance(final_array_item[segment["tag"]],dict):
-                        final_array_item[segment["tag"]] = [final_array_item[segment["tag"]],segment["elements"]]
-                    elif isinstance(final_array_item["DTM"],list) :
-                        final_array_item[segment["tag"]].append(segment["elements"])
+                for tag_element in segment_group_tags:
+                    if final_array_item.get(segment["tag"]) is None:
+                        final_array_item[segment["tag"]] = segment["elements"]
+                    else:
+                        if isinstance(final_array_item[segment["tag"]],dict):
+                            final_array_item[segment["tag"]] = [final_array_item[segment["tag"]],segment["elements"]]
+                        elif isinstance(final_array_item["DTM"],list) :
+                            final_array_item[segment["tag"]].append(segment["elements"])
         if len(final_array_item) != 0:
             final_array.append(final_array_item)
         final_res[segment_group_name]= final_array
@@ -144,26 +157,62 @@ class ProcessEDI:
                 case "NAD":
                     keys = ["PARTY_FUNCTION_CODE_QUALIFIER","PARTY_IDENTIFICATION_DETAILS","NAME_AND_ADDRESS","PARTY_NAME","STREET","CITY_NAME","COUNTRY_SUB-ENTITY_DETAILS","POSTAL_IDENTIFICATION_CODE","COUNTRY_NAME_CODE"]
                     child_keys = [["PARTY_IDENTIFIER","CODE_LIST_IDENTIFICATION_CODE","CODE_LIST_RESPONSIBLE_AGENCY_CODE"],["NAME_AND_ADDRESS_LINE","NAME_AND_ADDRESS_LINE","NAME_AND_ADDRESS_LINE","NAME_AND_ADDRESS_LINE","NAME_AND_ADDRESS_LINE"],["PARTY_NAME","PARTY_NAME","PARTY_NAME","PARTY_NAME","PARTY_NAME","PARTY_NAME_FORMAT_CODE"],["STREET_AND_NUMBER/P.O._BOX","STREET_AND_NUMBER/P.O._BOX","STREET_AND_NUMBER/P.O._BOX","STREET_AND_NUMBER/P.O._BOX","STREET_AND_NUMBER/P.O._BOX"],["COUNTRY_SUB_ENTITY_NAME_CODE","CODE_LIST_IDENTIFICATION_CODE","CODE_LIST_RESPONSIBLE_AGENCY_CODE","COUNTRY_SUB-ENTITY_NAME"]]
-                    max_use = 4              
+                    max_use = 4
+                case "GID":
+                    keys = ["GOODS_ITEM_NUMBER","NUMBER_AND_TYPE_OF_PACKAGES"]
+                    child_keys = [["NUMBER_OF_PACKAGES","PACKAGE_TYPE_DESCRIPTION_CODE","CODE_LIST_IDENTIFICATION_CODE","CODE_LIST_RESPONSIBLE_AGENCY_CODE","TYPE_OF_PACKAGES"]]
+                    max_use = 4
+                case "MEA":
+                    keys = ["MEASUREMENT_ATTRIBUTE_CODE","MEASUREMENT_DETAILS","VALUE/RANGE"]
+                    child_keys = [["MEASURED_ATTRIBUTE_CODE"],["MEASUREMENT_UNIT_CODE","MEASUREMENT_VALUE"]]
+                    max_use = 4
+                case "EQD":
+                    keys = ["EQUIPMENT_TYPE_CODE_QUALIFIER","EQUIPMENT_IDENTIFICATION","EQUIPMENT_SIZE_AND_TYPE","EQUIPMENT_SUPPLIER,CODED","EQUIPMENT_STATUS_CODE","FULL/EMPTY_INDICATOR,CODED"]
+                    child_keys = [["EQUIPMENT_IDENTIFICATION_NUMBER","CODE_LIST_IDENTIFICATION_CODE","CODE_LIST_RESPONSIBLE_AGENCY_CODE","COUNTRY_NAME_CODE"],["EQUIPMENT_SIZE_AND_TYPE_DESCRIPTION_CODE","CODE_LIST_IDENTIFICATION_CODE","CODE_LIST_RESPONSIBLE_AGENCY_CODE","EQUIPMENT_SIZE_AND_TYPE_DESCRIPTION"]]
+                    max_use = 4
+                case "EQN":
+                    keys = ["NUMBER_OF_UNIT_DETAILS"]
+                    child_keys = [["NUMBER_OF_UNITS","UNIT_TYPE_CODE_QUALIFIER"]]
+                    max_use = 4
+                case "TMD":
+                    keys = ["MOVEMENT_TYPE","EQUIPMENT_PLAN","HAULAGE_ARRANGEMENTS,CODED"]
+                    child_keys = [["MOVEMENT_TYPE_DESCRIPTION_CODE"]]
+                    max_use = 4
+                case "TMP":
+                    keys = ["TEMPERATURE_QUALIFIER","TEMPERATURE_SETTING"]
+                    child_keys = [["TEMPERATURE_SETTING","MEASUREMENT_UNIT_CODE"]]
+                    max_use = 4
+                case "UNT":
+                    keys = ["NUMBER_OF_SEGMENTS_IN_A_MESSAGE","MESSAGE_REFERENCE_NUMBER"]
+                    child_keys = [[]]
+                    max_use = 4
+                case "UNZ":
+                    keys = ["INTERCHANGE_CONTROL_COUNT","INTERCHANGE_CONTROL_REFERENCE"]
+                    child_keys = [[]]
+                    max_use = 4             
             segment_dict = self.convertSegmentMessageToDict(keys,child_keys,segment)
             self.checkRepeat(segment,max_use)
-            if self.isSegmentGroup(segment):
-                found_segment_group = self.checkSegmentInGroup(segment,self.segment_group_dict_keys)
+            if self.isInSegmentGroup(segment):
+                found_segment_group = self.findSegmentGroup(segment,self.segment_group_dict_keys)
                 # tìm thấy sg, add segment vào mảng và tìm nốt những segment tiếp theo tương ứng để add
                 if found_segment_group is not None:
+                    found_segment_group_index = self.segment_group_dict_keys.index(found_segment_group)
                     # segment đang làm việc vẫn nằm trong group hiện tại
-                    if found_segment_group["index"] == self.track_sg_index:
+                    if found_segment_group_index == self.track_sg_index:
                         self.current_segment_group.append(segment_dict)
                     # segment đang làm việc nằm trong 1 group khác, xử lý group đằng trước
                     else:
                         segment_group_name = next(iter(self.segment_group_dict_keys[self.track_sg_index]))
                         if self.current_segment_group:
-                            self.final_res[segment_group_name] = self.process_segment1(self.current_segment_group,self.segment_group_dict_keys[self.track_sg_index][segment_group_name][0],segment_group_name)
+                            self.final_res[segment_group_name] = self.processSegmentGroup(self.current_segment_group,found_segment_group)
                             self.current_segment_group = [segment_dict]
-                            self.pass_sg_index = found_segment_group["index"]
+                            self.pass_sg_index = found_segment_group_index
                         else:
                             self.current_segment_group.append(segment_dict)
-                        self.track_sg_index = found_segment_group["index"]
+                        self.track_sg_index = found_segment_group_index
+                else:
+                    self.start_segment_group = False
+                    self.addDictToFinalJson(segment_dict)    
             else:
                 self.addDictToFinalJson(segment_dict)
         return self.final_res
@@ -192,5 +241,4 @@ class ProcessEDI:
             self.final_res[tag] = elements
         self.current_dict = elements
         self.current_tag = tag
-        print("=======================================================================")
-        print(json.dumps(self.final_res,indent=2))
+    
