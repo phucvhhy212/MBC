@@ -22,8 +22,6 @@ class ProcessEDI:
     current_tag = ""
     current_segment_group = []
     current_segment_group_elements = []
-    track_segment_group= 0
-    # pass_sg_index = 0
     max_use = 1
     def __init__(self) -> None:
         pass
@@ -350,7 +348,7 @@ class ProcessEDI:
         return self.start_segment_group
     
     def findSegmentGroup(self,segment) -> list[str]:
-        """Find the segment group which the segment in
+        """Find the segment group of one segment
             :param segment: The segment to find
             :returns: the segment group found or None
         """
@@ -361,15 +359,25 @@ class ProcessEDI:
         return None
     
     def isInCurrentSegmentGroup(self,segment) -> bool:
+        """Check if the segment is belong to current processing segment group or not
+            :param segment: The segment to find
+            :returns: True or False
+        """
         return segment.tag in self.current_segment_group
     
     def processSegmentGroup(self,segment_array:list,current_segment_group:list[str]):
+        """Convert the segment group content into dictionary format
+            :param segment_array: Array of segments collected which belong to a segment group
+            :param current_segment_group: The segment group keys
+            :returns: The dictionary format of the segment group
+        """
         final_res = {}
         child_segment_group_elements = []
         final_res_item = {}
         child_segment_group = []
         key = current_segment_group[0]
         for segment in segment_array:
+            # 4 cases can happen in each segment of the group
             # case 1: key of working segment
             if segment.tag == key:
                 try:
@@ -386,6 +394,7 @@ class ProcessEDI:
                     final_res_item[key] = segment_dict
                 else:
                     final_res = [final_res_item]
+                    final_res_item = {}
                     final_res_item[key] = segment_dict
             # case 2: key of child segment group
             elif segment.tag in self.segment_group.keys():
@@ -400,7 +409,7 @@ class ProcessEDI:
             # case 3: segment in child segment group
             elif segment.tag in child_segment_group:
                 child_segment_group_elements.append(segment)
-            # case 4: segment in main segment group
+            # case 4: segment in parent segment group
             else:
                 try:
                     func = getattr(ProcessEDI,f"_{segment.tag}")
@@ -417,31 +426,39 @@ class ProcessEDI:
         return final_res
     
     def processSegments(self,segment_array:list):
+        """Convert the whole message
+            :param segment_array: Array of segments collected from file
+            :returns: The final dictionary format of the segment message
+        """
         for segment in segment_array:
             if self.isInSegmentGroup(segment):
+                # if we are working on a segment group and the segment belong to it, too
                 if self.isInCurrentSegmentGroup(segment):
                     self.current_segment_group_elements.append(segment)
                 else:
+                    # the segment belong to a new group other than the one calculating, process the previous one and then proceed to the current
                     if self.current_segment_group:
                         self.final_res[self.current_segment_group[0]] = self.processSegmentGroup(self.current_segment_group_elements,self.current_segment_group)
                     self.current_segment_group_elements = [segment]
                     self.current_segment_group = self.findSegmentGroup(segment)
+            # not in a group => single segment => convert to dict and then add directly to the final result
             else:
                 try :
                     func = getattr(ProcessEDI,f"_{segment.tag}")
                     segment_dict = func(self,segment.elements)
                     self.addDictToFinalJson(segment.tag,segment_dict)
-                    print("=============================================")
-                    print(json.dumps(self.final_res,indent=2))
                 except:
                     raise Exception("parse error")
-              
-            
         return self.final_res
             
                         
                 
     def checkRepeat(self,segment,max_use):
+        """Check whether an element repeated count exceed one's max use or not
+            :param segment: The current segment
+            :param max_use: Maximum repeatation time of an element
+            :returns: None or Excetion if segment violate the max_use parameter
+        """
         if self.current_tag == segment.tag:
             self.count_repeat +=1
         else:
@@ -451,6 +468,10 @@ class ProcessEDI:
     
     
     def addDictToFinalJson(self,tag,segment_dict):
+        """Add the converted dict/list[dict] into final result
+            :param tag: The dict/list[dict] tag
+            :param segment_dict: The segment dict/list[dict]
+        """
         # if final_res already having a segment with the same tag with the current processing segment, add to list
         if self.count_repeat > 1: 
             if not isinstance(self.final_res[tag],list):
